@@ -6,8 +6,10 @@ import (
 	"io/ioutil"
 	"os"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
+  "github.com/gosexy/exif"
 )
 
 func check(e error) {
@@ -20,22 +22,101 @@ func printType(a interface{}) {
 	fmt.Println(reflect.TypeOf(a))
 }
 
+func trimLeadingDashSpace(s string) string {
+	return strings.TrimLeft(s, " -_")
+}
+
+func addLeadingDashSpace(s string) string {
+	return " - " + s
+}
+
+func convYYYYMMDD(name string) []string {
+	YYYYMMDD := regexp.MustCompile(`^(\d{8})(\D.*)`)
+	// No great reason for MustCompile, just going with docs
+	match := YYYYMMDD.FindStringSubmatch(name)
+	result := make([]string, 2)
+	if len(match) > 0 {
+		result = []string{match[1], match[2]}
+	}
+	return result
+}
+
+func convDayMonYr(name string) []string {
+	dMonYYYY := regexp.MustCompile(`^(\d+)\s+([A-Z][a-z][a-z])\s+(\d{4})(.*)`)
+	monMap := map[string]int{
+		"Jan": 1,
+		"Feb": 2,
+		"Mar": 3,
+		"Apr": 4,
+		"May": 5,
+		"Jun": 6,
+		"Jul": 7,
+		"Aug": 8,
+		"Sep": 9,
+		"Oct": 10,
+		"Nov": 11,
+		"Dec": 12,
+	}
+	match := dMonYYYY.FindStringSubmatch(name)
+	result := make([]string, 2)
+	if len(match) > 0 {
+		year := match[3]
+		monStr := match[2]
+		monInt := monMap[monStr]
+		monStr = zeroPad(monInt, 2)
+		dayStr := match[1]
+		dayInt, err := strconv.Atoi(dayStr)
+		check(err)
+		dayStr = zeroPad(dayInt, 2)
+		date := year + monStr + dayStr
+		result = []string{date, match[4]}
+	}
+	return result
+}
+
+func convYYYYUnderscore(name string) []string {
+	YYYY_MM_DD := regexp.MustCompile(`^(\d{4})_(\d{2})_(\d{2})(.*)`)
+	match := YYYY_MM_DD.FindStringSubmatch(name)
+	result := make([]string, 2)
+	if len(match) > 0 {
+		result = []string{match[1] + match[2] + match[3], match[4]}
+	}
+	return result
+}
+
+func isFileJpg
+
+func goIntoDirectory(file os.FileInfo) string {
+  dirList, err := ioutil.ReadDir(file.Name())
+  for _, file := range dirList {
+    isJpg := isFileJpg(file)
+    if isJpg {
+      jpg
+    }
+  }
+}
+
 func getDateBasedFilename(file os.FileInfo) string {
-	// Check if filename.Name() already starts with YYYMMDD and bail if so
-	/* isDate := blah(dir.Name())
-	   if someCheck {
-	     go equiv of next()
-	  }*/
-
-	// Check if dir.Name() converts easily to YYYMMDD in format
-	// 1 Apr YYYY or YYYY_MM_DD
-
-	/* getDateFromName := blah(dir.Name())
-	   if getDateFromName which returns a string then pass that to move
-	*/
 	fmt.Println("Processing " + file.Name())
-
-	return file.Name()
+	dateFilename := convYYYYMMDD(file.Name())
+	if len(dateFilename[0]) == 0 {
+		dateFilename = convDayMonYr(file.Name())
+		if len(dateFilename[0]) == 0 {
+			dateFilename = convYYYYUnderscore(file.Name())
+			if len(dateFilename[0]) == 0 {
+        dateFilename = goIntoDirectory(file)
+				fmt.Println("No conversion for: " + file.Name())
+			}
+		}
+	}
+	fileDate := dateFilename[0]
+	fileName := dateFilename[1]
+	if len(fileName) > 0 {
+		fileName = trimLeadingDashSpace(fileName)
+		fileName = addLeadingDashSpace(fileName)
+	}
+	newFileName := fileDate + fileName
+	return newFileName
 }
 
 // Check map to see if key exists and increment if it already does
@@ -89,6 +170,7 @@ func main() {
 		for _, file := range dirList {
 
 			fileName = getDateBasedFilename(file)
+			fmt.Println(file.Name() + " ---> " + fileName)
 			fileName = getUniqueMapKey(fileName, newDirList)
 			newDirList[fileName] = file.Name()
 
