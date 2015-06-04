@@ -3,18 +3,28 @@ package main
 import (
 	"fmt"
 	"github.com/codegangsta/cli"
+	"github.com/gosexy/exif"
+	"io"
 	"io/ioutil"
+	"mime"
 	"os"
+	"path"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
-  "github.com/gosexy/exif"
 )
 
 func check(e error) {
 	if e != nil {
 		panic(e)
+	}
+}
+
+func checkNoPanic(e error) {
+	if e != nil {
+		fmt.Println("Yikes! " + e.Error())
 	}
 }
 
@@ -74,8 +84,8 @@ func convDayMonYr(name string) []string {
 	return result
 }
 
-func convYYYYUnderscore(name string) []string {
-	YYYY_MM_DD := regexp.MustCompile(`^(\d{4})_(\d{2})_(\d{2})(.*)`)
+func convYYYYSep(name string, sep string) []string {
+	YYYY_MM_DD := regexp.MustCompile(`^(\d{4})` + sep + `(\d{2})` + sep + `(\d{2})(.*)`)
 	match := YYYY_MM_DD.FindStringSubmatch(name)
 	result := make([]string, 2)
 	if len(match) > 0 {
@@ -84,28 +94,82 @@ func convYYYYUnderscore(name string) []string {
 	return result
 }
 
-func isFileJpg
-
-func goIntoDirectory(file os.FileInfo) string {
-  dirList, err := ioutil.ReadDir(file.Name())
-  for _, file := range dirList {
-    isJpg := isFileJpg(file)
-    if isJpg {
-      jpg
-    }
-  }
+func isFileJpg(file os.FileInfo) bool {
+	var isJpg bool = false
+	fileType := mime.TypeByExtension(path.Ext(file.Name()))
+	fmt.Println(" Type for " + file.Name() + " is " + fileType)
+	if fileType == "image/jpeg" {
+		isJpg = true
+	}
+	return isJpg
 }
 
-func getDateBasedFilename(file os.FileInfo) string {
-	fmt.Println("Processing " + file.Name())
-	dateFilename := convYYYYMMDD(file.Name())
+func getImgExifDate(filePath string) string {
+	dateExif := "YYYYMMDD"
+	exifReader := exif.New()
+	imgData, errOpen := os.Open(filePath)
+	checkNoPanic(errOpen)
+	if errOpen != nil {
+		return dateExif
+	}
+
+	defer imgData.Close()
+
+	_, errCopy := io.Copy(exifReader, imgData)
+	if errCopy != nil && errCopy != exif.FoundExifInData {
+		fmt.Println("YIKES copying exif: " + errCopy.Error())
+		return dateExif
+	}
+
+	parseErr := exifReader.Parse()
+	checkNoPanic(parseErr)
+	if parseErr != nil {
+		return dateExif
+	}
+
+	// print out key,val pair for each tag
+	for key, val := range exifReader.Tags {
+		if key == "Date and Time" {
+			dateExifSlice := convYYYYSep(val, ":")
+			dateExif = dateExifSlice[0]
+			break
+		}
+	}
+
+	return dateExif
+}
+
+func getDateFromFilesInDir(dir os.FileInfo, basePath string) []string {
+	dirList, err := ioutil.ReadDir(dir.Name())
+	check(err)
+	result := make([]string, 2)
+
+	dateExif := "YYYYMMDD"
+	var isJpg bool = false
+	for _, imgFile := range dirList {
+		isJpg = isFileJpg(imgFile)
+		filePath := basePath + "/" + imgFile.Name()
+		if isJpg {
+			dateExif = getImgExifDate(filePath)
+
+			if dateExif != "YYYYMMDD" {
+				break
+			}
+		}
+	}
+	result = []string{dateExif, dir.Name()}
+	return result
+}
+
+func getDateBasedFilename(dir os.FileInfo, absPath string) string {
+	dirName := dir.Name()
+	dateFilename := convYYYYMMDD(dirName)
 	if len(dateFilename[0]) == 0 {
-		dateFilename = convDayMonYr(file.Name())
+		dateFilename = convDayMonYr(dirName)
 		if len(dateFilename[0]) == 0 {
-			dateFilename = convYYYYUnderscore(file.Name())
+			dateFilename = convYYYYSep(dirName, "_")
 			if len(dateFilename[0]) == 0 {
-        dateFilename = goIntoDirectory(file)
-				fmt.Println("No conversion for: " + file.Name())
+				dateFilename = getDateFromFilesInDir(dir, absPath+"/"+dirName)
 			}
 		}
 	}
@@ -153,34 +217,50 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "iphoto_export_renamer"
 	app.Usage = "Rename a folder from iPhoto events export by date"
+	app.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:  "outfile, o",
+			Value: "output.sh",
+			Usage: "Name of output file",
+		},
+	}
+
 	app.Action = func(c *cli.Context) {
 		directory := "."
 		if len(c.Args()) > 0 {
 			directory = c.Args()[0]
 		}
+		absPath, pathErr := filepath.Abs(directory)
+		check(pathErr)
 
-		fmt.Println("Processing Directory " + directory + "...\n")
+		outfilePath := absPath + "/" + c.String("outfile")
 
-		dirList, err := ioutil.ReadDir(directory)
+		fmt.Println("Processing Directory " + absPath + "...\n")
+
+		dirList, err := ioutil.ReadDir(absPath)
 		check(err)
 		var newDirList = make(map[string]string)
 
 		// Some vars we'll use in our loop
 		var fileName string
-		for _, file := range dirList {
-
-			fileName = getDateBasedFilename(file)
-			fmt.Println(file.Name() + " ---> " + fileName)
-			fileName = getUniqueMapKey(fileName, newDirList)
-			newDirList[fileName] = file.Name()
-
-			// // Go into directory, list files and repeat this loop to name
-
-			// // If no files are datelike, then try their exif data
-
+		for _, dir := range dirList {
+			if dir.IsDir() {
+				fileName = getDateBasedFilename(dir, absPath)
+				fmt.Println(dir.Name() + " ---> " + fileName)
+				fileName = getUniqueMapKey(fileName, newDirList)
+				newDirList[fileName] = dir.Name()
+			}
 		}
 
-		fmt.Println(newDirList)
+		// Write to a file disignated by the -o flag
+		f, err := os.Create(outfilePath)
+		check(err)
+		defer f.Close()
+		for key, value := range newDirList {
+			f.WriteString("mv \"" + value + "\" \"" + key + "\"\n")
+		}
+		f.Sync()
+
 	}
 
 	app.Run(os.Args)
