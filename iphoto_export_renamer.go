@@ -257,7 +257,7 @@ func main() {
 		check(err)
 		defer f.Close()
 		for key, value := range newDirList {
-			f.WriteString("mv \"" + value + "\" \"" + key + "\"\n")
+			f.WriteString("mv \"" + value + "\" \"renamed_folders/" + key + "\"\n")
 		}
 		f.Sync()
 
